@@ -14,7 +14,7 @@ def handler(event, _):
     return {
         "statusCode": 200,
         "body": json.dumps({
-            "state": instance.state,
+            "state": instance.state["Name"],
             "dns": instance.public_dns_name
         })
     }
