@@ -1,0 +1,3 @@
+aws-requests-auth
+aws-sam-cli
+requests

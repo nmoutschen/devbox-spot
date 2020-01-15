@@ -3,16 +3,13 @@ Transform: "AWS::Serverless-2016-10-31"
 
 
 Parameters:
-  DomainName:
-    Type: String
-    Description: Domain name used for the development machine
   InstanceType:
     Type: String
     Description: Instance type used for the development machine
   OperatingSystem:
     Type: String
     Description: Operating system for the development machine
-    Default: ubuntu-19.10
+    Default: ubuntu
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: SSH key to connect to the development machine
@@ -20,20 +17,23 @@ Parameters:
 
 Mappings:
   ImageId:
-    ubuntu-19.10:
-      # Taken from https://cloud-images.ubuntu.com/locator/ec2/
-      eu-north-1: ami-0b321105d199c4774
-      eu-west-1: ami-0665161784d935578
-      us-east-1: ami-0b6b1f8f449568786
-      us-west-1: ami-0bad1f1c6d0baa1c7
-      us-west-2: ami-02c8040256f30fb45
+    # Taken from https://cloud-images.ubuntu.com/locator/ec2/
+    eu-north-1:
+      ubuntu: ami-0b321105d199c4774
+    eu-west-1:
+      ubuntu: ami-0665161784d935578
+    us-east-1:
+      ubuntu: ami-0b6b1f8f449568786
+    us-west-1:
+      ubuntu: ami-0bad1f1c6d0baa1c7
+    us-west-2:
+      ubuntu: ami-02c8040256f30fb45
 
 
 Globals:
   Function:
-    # Cannot use python3.8, as that runtime does not support InlineCode.
-    Runtime: python3.7
-    Handler: index.handler
+    Runtime: python3.8
+    Handler: main.handler
     Timeout: 60
 
 
@@ -41,49 +41,24 @@ Resources:
   SpotInstanceFunction:
     Type: AWS::Serverless::Function
     Properties:
-      InlineCode: |
-        import boto3, cfnresponse
-        ec2 = boto3.client("ec2")
-
-        def handler(event, context):
-            response_data = {}
-            try:
-                instance = ec2.run_instances(
-                    ImageId=event["ResourceProperties"]["ImageId"],
-                    InstanceType=event["ResourceProperties"]["InstanceType"],
-                    KeyName=event["ResourceProperties"]["KeyName"],
-                    SecurityGroupIds=[event["ResourceProperties"]["SecurityGroupId"]],
-                    UserData=event["ResourceProperties"].get("UserData"),
-                    InstanceInitiatedShutdownBehavior="stop",
-                    InstanceMarketOptions={
-                        "MarketType": "Spot",
-                        "SpotOptions": {
-                            "SpotInstanceType": "persistent",
-                            "InstanceInterruptionBehavior": "stop"
-                        }
-                    },
-                    MinCount=1,
-                    MaxCount=1
-                )
-                instance_id = instance["Instances"][0]["InstanceId"]
-                cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, instance_id)
-            except:
-                cfnresponse.send(event, context, cfnresponse.FAILED, response_data, "")
+      CodeUri: src/spot_instance/
       Policies:
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
-              Action: ec2:RunInstances
+              Action:
+                - ec2:RunInstances
+                - ec2:DeleteInstances
               Resource: "*"
 
   SpotInstance:
     Type: Custom::SpotInstance
     Properties:
       ServiceToken: !GetAtt SpotInstanceFunction.Arn
-      ImageId: !FindInMap [ImageId, !Ref OperatingSystem, !Ref AWS::Region]
+      ImageId: !FindInMap [ImageId, !Ref "AWS::Region", !Ref OperatingSystem]
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
-      SecurityGroupId: !Ref SecurityGroup
+      SecurityGroupId: !GetAtt SecurityGroup.GroupId
       UserData: |
         #!/bin/bash
 
@@ -92,56 +67,33 @@ Resources:
     
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: devbox security group
 
   StartFunction:
     Type: AWS::Serverless::Function
     Properties:
-      InlineCode: |
-        import json, os, boto3
-        ec2 = boto3.resource("ec2")
-        def handler(event, _):
-            ip = event["requestContext"]["identity"]["sourceIp"]
-            # Authorize the caller to send ICMP & SSH requests
-            sg = ec2.SecurityGroup(os.environ["SECURITY_GROUP_ID"])
-            sg.authorize_ingress(
-                CidrIp="{}/32".format(ip),
-                IpProtocol="icmp",
-                FromPort=-1,
-                ToPort=-1
-            )
-            sg.authorize_ingress(
-                CidrIp="{}/32".format(ip),
-                IpProtocol="tcp",
-                FromPort=22,
-                ToPort=22
-            )
-            # Start the instance
-            instance = ec2.Instance(os.environ["INSTANCE_ID"])
-            instance.start()
-            return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "state": instance.state,
-                    "dns": instance.public_dns_name
-                })
-            }
+      CodeUri: src/start_instance/
       Environment:
         Variables:
           INSTANCE_ID: !Ref SpotInstance
-          SECURITY_GROUP_ID: !Ref SecurityGroup
+          SECURITY_GROUP_ID: !GetAtt SecurityGroup.GroupId
       Policies:
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - ec2:DescribeInstances
+                - ec2:DescribeSecurityGroups
+              Resource: "*"
+            - Effect: Allow
+              Action:
                 - ec2:StartInstances
               Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${SpotInstance}"
             - Effect: Allow
               Action:
-                - ec2:DescribeSecurityGroups
                 - ec2:AuthorizeSecurityGroupIngress
-              Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroup}"
+              Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroup.GroupId}"
       Events:
         Api:
           Type: Api
@@ -154,19 +106,7 @@ Resources:
   StatusFunction:
     Type: AWS::Serverless::Function
     Properties:
-      InlineCode: |
-        import os, boto3
-        ec2 = boto3.resource("ec2")
-        def handler(event, _):
-            # Return the instance status
-            instance = ec2.Instance(os.environ["INSTANCE_ID"])
-            return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "state": instance.state,
-                    "dns": instance.public_dns_name
-                })
-            }
+      CodeUri: src/status/
       Environment:
         Variables:
           INSTANCE_ID: !Ref SpotInstance
@@ -176,7 +116,7 @@ Resources:
             - Effect: Allow
               Action:
                 - ec2:DescribeInstances
-              Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${SpotInstance}"
+              Resource: "*"
       Events:
         Api:
           Type: Api
@@ -190,24 +130,21 @@ Resources:
   StopFunction:
     Type: AWS::Serverless::Function
     Properties:
-      InlineCode: |
-        import os, boto3
-        ec2 = boto3.resource("ec2")
-        def handler(event, _):
-          # Remove all permissions from SecurityGroup
-          sg = ec2.SecurityGroup(os.environ["SECURITY_GROUP_ID"])
-          sg.revoke_ingress(IpPermissions=sg.ip_permissions)
+      CodeUri: src/stop/
       Environment:
         Variables:
-          SECURITY_GROUP_ID: !Ref SecurityGroup
+          SECURITY_GROUP_ID: !GetAtt SecurityGroup.GroupId
       Policies:
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - ec2:DescribeSecurityGroups
+              Resource: "*"
+            - Effect: Allow
+              Action:
                 - ec2:RevokeSecurityGroupIngress
-              Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroup}"
+              Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroup.GroupId}"
       Events:
         InstanceStopped:
           Type: CloudWatchEvent
@@ -222,3 +159,9 @@ Resources:
                   - !Ref SpotInstance
                 state:
                   - stopped
+
+
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
