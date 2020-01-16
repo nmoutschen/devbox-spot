@@ -26,4 +26,4 @@ status:
 
 connect:
 	$(info [*] Connecting to the instance)
-	ssh -i $(SSH_KEY) $(USERNAME)@$(shell scripts/devbox status $(STACK_NAME) | jq '.dns')
+	@ssh -i $(SSH_KEY) $(USERNAME)@$(shell scripts/devbox status $(STACK_NAME) | jq '.dns')

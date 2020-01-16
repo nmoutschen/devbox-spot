@@ -48,7 +48,7 @@ Resources:
             - Effect: Allow
               Action:
                 - ec2:RunInstances
-                - ec2:DeleteInstances
+                - ec2:TerminateInstances
               Resource: "*"
 
   SpotInstance:
@@ -62,7 +62,45 @@ Resources:
       UserData: |
         #!/bin/bash
 
+        # Update packages
         apt-get update -y
+
+        # Add SSH connection monitor
+        cat > /root/sshmonitor.py << EOF
+        #!/usr/bin/env python3
+        import subprocess, time
+        SLEEP_DURATION = 30
+        MAX_COUNT = 10
+        def main():
+            count = 0
+            while count < MAX_COUNT:
+                process = subprocess.run(["ps", "-ef"], stdout=subprocess.PIPE, encoding="utf-8")
+                if "sshd: ubuntu" in process.stdout:
+                    print("User active")
+                    count = 0
+                else: count += 1
+                time.sleep(SLEEP_DURATION)
+            print("System shutting down")
+            subprocess.run(["shutdown", "-h", "now"])
+        if __name__ == "__main__": main()
+        EOF
+        chmod 700 /root/sshmonitor.py
+        
+        cat > /etc/systemd/system/sshmonitor.service << EOF
+        [Unit]
+        Description=SSH Activity Monitor
+        After=ssh.service
+        
+        [Service]
+        ExecStart=/root/sshmonitor.py
+        Restart=on-failure
+        
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        systemctl enable sshmonitor.service
+
+        # Shutdown the instance
         shutdown -h now
     
   SecurityGroup:
