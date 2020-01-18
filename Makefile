@@ -14,7 +14,7 @@ build:
 
 deploy:
 	$(info [*] Deploying stack)
-	@sam deploy
+	@if [ -f samconfig.toml ]; then sam deploy; else sam deploy --guided; fi
 
 start:
 	$(info [*] Starting devbox)
