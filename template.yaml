@@ -38,6 +38,10 @@ Globals:
 
 
 Resources:
+  #################
+  # SPOT INSTANCE #
+  #################
+
   SpotInstanceFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -103,15 +107,23 @@ Resources:
         # Shutdown the instance
         shutdown -h now
     
+  ##################
+  # SECURITY GROUP #
+  ##################
+
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: devbox security group
 
+  #################
+  # API FUNCTIONS #
+  #################
+
   StartFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/start_instance/
+      CodeUri: src/api_start/
       Environment:
         Variables:
           INSTANCE_ID: !Ref SpotInstance
@@ -144,7 +156,7 @@ Resources:
   StatusFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/status/
+      CodeUri: src/api_status/
       Environment:
         Variables:
           INSTANCE_ID: !Ref SpotInstance
@@ -164,11 +176,14 @@ Resources:
             Auth:
               Authorizer: AWS_IAM
 
+  ###################
+  # EVENT FUNCTIONS #
+  ###################
 
-  StopFunction:
+  OnStopFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/stop/
+      CodeUri: src/on_stop/
       Environment:
         Variables:
           SECURITY_GROUP_ID: !GetAtt SecurityGroup.GroupId
@@ -197,7 +212,6 @@ Resources:
                   - !Ref SpotInstance
                 state:
                   - stopped
-
 
 
 Outputs:
