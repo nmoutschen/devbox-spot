@@ -7,13 +7,13 @@ import botocore.exceptions
 ec2 = boto3.resource("ec2")
 
 
-def handler(event, _):
-    print("EVENT: ", event)
-    # Get the caller IP address
-    ip = event["requestContext"]["identity"]["sourceIp"]
+def authorize_ip(sg_id: str, ip: str):
+    """
+    Authorize ICMP and SSH incoming traffic from the given IP address to the
+    security group.
+    """
 
-    # Authorize the caller to send ICMP & SSH requests
-    sg = ec2.SecurityGroup(os.environ["SECURITY_GROUP_ID"])
+    sg = ec2.SecurityGroup(sg_id)
     try:
         sg.authorize_ingress(
             CidrIp="{}/32".format(ip),
@@ -37,17 +37,44 @@ def handler(event, _):
         if exc.response['Error']['Code'] != 'InvalidPermission.Duplicate':
             raise exc
 
-    # Start the instance
-    # Check that the instance is not already running or starting (pending)
+
+def start_instance(instance_id: str):
+    """
+    Start the instance if it is not already running or starting (pending)
+    """
+
+    instance = ec2.Instance(instance_id)
     if instance.state["Name"] not in ["running", "pending"]:
-        instance = ec2.Instance(os.environ["INSTANCE_ID"])
         instance.start()
 
-    # Return the instance status and DNS
+
+def get_instance_details(instance_id: str):
+    """
+    Return details about the given instance
+    """
+
+    instance = ec2.Instance(instance_id)
+
+    # Return State and DNS name
+    return {
+        "state": instance.state["Name"],
+        "dns": instance.public_dns_name
+    }
+
+
+def handler(event, _):
+    print("EVENT: ", event)
+    # Get the caller IP address
+    ip = event["requestContext"]["identity"]["sourceIp"]
+
+    # Authorize the caller to send ICMP & SSH requests to the Security Group
+    authorize_ip(os.environ["SECURITY_GROUP_ID"], ip)
+
+    # Start the instance
+    start_instance(os.environ["INSTANCE_ID"])
+
+    # Return the instance details
     return {
         "statusCode": 200,
-        "body": json.dumps({
-            "state": instance.state["Name"],
-            "dns": instance.public_dns_name
-        })
+        "body": json.dumps(get_instance_details(os.environ["INSTANCE_ID"]))
     }
