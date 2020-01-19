@@ -48,18 +48,25 @@ def start_instance(instance_id: str):
         instance.start()
 
 
-def get_instance_details(instance_id: str):
+def get_instance_details(instance_id: str, domain_name: str):
     """
     Return details about the given instance
     """
 
     instance = ec2.Instance(instance_id)
 
-    # Return State and DNS name
-    return {
-        "state": instance.state["Name"],
-        "dns": instance.public_dns_name
+    # Gather state
+    retval = {
+        "state": instance.state["Name"]
     }
+
+    # Gather DNS
+    if domain_name != "":
+        retval["dns"] = domain_name
+    else:
+        retval["dns"] = instance.public_dns_name
+
+    return retval
 
 
 def handler(event, _):
@@ -76,5 +83,5 @@ def handler(event, _):
     # Return the instance details
     return {
         "statusCode": 200,
-        "body": json.dumps(get_instance_details(os.environ["INSTANCE_ID"]))
+        "body": json.dumps(get_instance_details(os.environ["INSTANCE_ID"], os.environ["DOMAIN_NAME"]))
     }

@@ -13,6 +13,19 @@ Parameters:
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: SSH key to connect to the development machine
+  HostedZoneId:
+    Type: String
+    Description: |
+      Hosted Zone ID if you want to use custom domains. If this parameter is
+      empty, it will default to the default public DNS name of the EC2
+      instance.
+    Default: ""
+  DomainName:
+    Type: String
+    Description: |
+      Domain name to use for the Hosted Zone. If the HostedZoneId parameter is
+      an empty string, this will use the default DNS name of the EC2 instance.
+    Default: ""
 
 
 Mappings:
@@ -38,6 +51,11 @@ Globals:
     Tracing: Active
   Api:
     TracingEnabled: true
+
+
+
+Conditions:
+  HasHostedZone: !Not [ !Equals [ "", !Ref HostedZoneId ] ]
 
 
 Resources:
@@ -131,6 +149,7 @@ Resources:
         Variables:
           INSTANCE_ID: !Ref SpotInstance
           SECURITY_GROUP_ID: !GetAtt SecurityGroup.GroupId
+          DOMAIN_NAME: !Ref DomainName
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -163,6 +182,7 @@ Resources:
       Environment:
         Variables:
           INSTANCE_ID: !Ref SpotInstance
+          DOMAIN_NAME: !Ref DomainName
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -183,13 +203,54 @@ Resources:
   # EVENT FUNCTIONS #
   ###################
 
+  OnRunFunction:
+    # When the EC2 instance changes to the 'running' state
+    Type: AWS::Serverless::Function
+    # No need to deploy this function when there are no HostedZoneId
+    Condition: HasHostedZone
+    Properties:
+      CodeUri: src/on_run/
+      Environment:
+        Variables:
+          HOSTED_ZONE_ID: !Ref HostedZoneId
+          DOMAIN_NAME: !Ref DomainName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+              Resource: "*"
+            - Effect: Allow
+              Action: 
+                - route53:ChangeResourceRecordSets
+              Resource: !Sub "arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}"
+      Events:
+        InstanceRunning:
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              source:
+                - aws.ec2
+              detail-type:
+                - "EC2 Instance State-change Notification"
+              detail:
+                instance-id:
+                  - !Ref SpotInstance
+                state:
+                  - running
+
+
   OnStopFunction:
+    # When the EC2 instance changes to the 'stopped' state
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: src/on_stop/
       Environment:
         Variables:
           SECURITY_GROUP_ID: !GetAtt SecurityGroup.GroupId
+          HOSTED_ZONE_ID: !Ref HostedZoneId
+          DOMAIN_NAME: !Ref DomainName
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -201,6 +262,12 @@ Resources:
               Action:
                 - ec2:RevokeSecurityGroupIngress
               Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${SecurityGroup.GroupId}"
+            - Effect: Allow
+              Action:
+                - route53:ListResourceRecordSets
+                - route53:ChangeResourceRecordSets
+              # If there are no HostedZoneId, this will not grant any permission
+              Resource: !Sub "arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}"
       Events:
         InstanceStopped:
           Type: CloudWatchEvent
@@ -220,3 +287,23 @@ Resources:
 Outputs:
   ApiEndpoint:
     Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: Instance Configuration
+        Parameters:
+          - InstanceType
+          - OperatingSystem
+          - KeyName
+      - Label: Domain Configuration
+        Parameters:
+          - HostedZoneId
+          - DomainName
+    ParameterLabels:
+      InstanceType: Instance Type
+      OperatingSystem: Operating System
+      KeyName: Key Name
+      HostedZoneId: Route53 Zone Id
+      DomainName: Instance Domain Name
