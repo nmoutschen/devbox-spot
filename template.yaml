@@ -35,6 +35,9 @@ Globals:
     Runtime: python3.8
     Handler: main.handler
     Timeout: 60
+    Tracing: Active
+  Api:
+    TracingEnabled: true
 
 
 Resources:
