@@ -3,6 +3,7 @@ Transform: "AWS::Serverless-2016-10-31"
 
 
 Parameters:
+  # Instance configuration
   InstanceType:
     Type: String
     Description: Instance type used for the development machine
@@ -13,6 +14,16 @@ Parameters:
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: SSH key to connect to the development machine
+  
+  # IAM configuration
+  IamRoleName:
+    Type: String
+    Description: |
+      Name of the IAM Role for the EC2 instance. If  this parameter is empty,
+      the instance will not launch with an instance profile.
+    Default: ""
+
+  # DNS configuration
   HostedZoneId:
     Type: String
     Description: |
@@ -56,9 +67,21 @@ Globals:
 
 Conditions:
   HasHostedZone: !Not [ !Equals [ "", !Ref HostedZoneId ] ]
+  HasIamRole: !Not [ !Equals [ "", !Ref IamRoleName ] ]
 
 
 Resources:
+  ####################
+  # INSTANCE PROFILE #
+  ####################
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: HasIamRole
+    Properties:
+      Roles:
+        - !Ref IamRoleName
+
   #################
   # SPOT INSTANCE #
   #################
@@ -74,7 +97,13 @@ Resources:
               Action:
                 - ec2:RunInstances
                 - ec2:TerminateInstances
+                - ec2:AssociateIamInstanceProfile
+                - ec2:DisassociateIamInstanceProfile
+                - ec2:ReplaceIamInstanceProfileAssociation
               Resource: "*"
+            - Effect: Allow
+              Action: iam:PassRole
+              Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${IamRoleName}"
 
   SpotInstance:
     Type: Custom::SpotInstance
@@ -83,6 +112,7 @@ Resources:
       ImageId: !FindInMap [ImageId, !Ref "AWS::Region", !Ref OperatingSystem]
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyName
+      InstanceProfileArn: !If [ "HasIamRole", !GetAtt InstanceProfile.Arn, !Ref AWS::NoValue ]
       SecurityGroupId: !GetAtt SecurityGroup.GroupId
       UserData: |
         #!/bin/bash
@@ -297,7 +327,10 @@ Metadata:
           - InstanceType
           - OperatingSystem
           - KeyName
-      - Label: Domain Configuration
+      - Label: IAM Configuration
+        Parameters:
+          - IamRoleName
+      - Label: DNS Configuration
         Parameters:
           - HostedZoneId
           - DomainName
@@ -305,5 +338,6 @@ Metadata:
       InstanceType: Instance Type
       OperatingSystem: Operating System
       KeyName: Key Name
+      IamRoleName: IAM Role Name
       HostedZoneId: Route53 Zone Id
       DomainName: Instance Domain Name

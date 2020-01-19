@@ -9,23 +9,34 @@ ec2 = boto3.client("ec2")
 @helper.create
 @helper.update
 def create_instance(event, context):
-    instance = ec2.run_instances(
-        ImageId=event["ResourceProperties"]["ImageId"],
-        InstanceType=event["ResourceProperties"]["InstanceType"],
-        KeyName=event["ResourceProperties"]["KeyName"],
-        SecurityGroupIds=[event["ResourceProperties"]["SecurityGroupId"]],
-        UserData=event["ResourceProperties"].get("UserData", ""),
-        InstanceInitiatedShutdownBehavior="stop",
-        InstanceMarketOptions={
+    rprops = event["ResourceProperties"]
+
+    kwargs = {
+        "ImageId": rprops["ImageId"],
+        "InstanceType": rprops["InstanceType"],
+        "SecurityGroupIds": [rprops["SecurityGroupId"]],
+        "UserData": rprops.get("UserData", ""),
+        "InstanceInitiatedShutdownBehavior": "stop",
+        "InstanceMarketOptions": {
             "MarketType": "spot",
             "SpotOptions": {
                 "SpotInstanceType": "persistent",
                 "InstanceInterruptionBehavior": "stop"
             }
         },
-        MinCount=1,
-        MaxCount=1
-    )
+        "MinCount": 1,
+        "MaxCount": 1
+    }
+
+    # Add the SSH key, if any
+    if "KeyName" in rprops:
+        kwargs["KeyName"] = rprops["KeyName"]
+
+    # Add the instance profile, if any
+    if "InstanceProfileArn" in rprops:
+        kwargs["IamInstanceProfile"] = {"Arn": rprops["InstanceProfileArn"]}
+
+    instance = ec2.run_instances(**kwargs)
     return instance["Instances"][0]["InstanceId"]
 
 
