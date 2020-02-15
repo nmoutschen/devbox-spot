@@ -3,6 +3,8 @@ DevBox on Spot
 
 DevBox on Spot is a small utility to run a development environment on spot instances on AWS.
 
+![Architecture Diagram](architecture.png)
+
 ## Dependencies
 
 This project uses the python modules mentioned in [requirements.txt](requirements.txt). It also needs [jq](https://stedolan.github.io/jq/) for the `make connect` command.
@@ -31,3 +33,5 @@ To stop the instance, you can run the following command _within the instance_:
 ```bash
 sudo shutdown -h now
 ```
+
+By default, the instance is scheduled to automatically shutdown when no SSH connection are active for a period of 5 minutes.
